@@ -355,6 +355,29 @@ function createLamp() {
     scene.add(lamp);
 }
 
+function createRadialGlowTexture(r = 77, g = 171, b = 247) {
+    // Soft radial gradient sprite texture used for the bezel aura glow.
+    // Fully opaque at the center, fading smoothly to transparent at the edge.
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.9)`);
+    gradient.addColorStop(0.35, `rgba(${r}, ${g}, ${b}, 0.5)`);
+    gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, 0.15)`);
+    gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+}
+
 function createMonitor() {
     monitor = new THREE.Group();
 
@@ -430,44 +453,27 @@ function createMonitor() {
         screen.add(line);
     });
 
-    // Pulsing glow around monitor screen for interactivity hint
-    const glowGeometry = new THREE.BoxGeometry(1.12, 0.70, 0.04);
-    const glowMaterial = new THREE.MeshStandardMaterial({
+    // Bezel aura glow — a soft radial-gradient sprite sitting just behind the
+    // monitor frame/bezel. This pulses in opacity/scale to hint interactivity
+    // WITHOUT touching the screen content, so the code lines stay perfectly
+    // static and stable.
+    const bezelGlowTexture = createRadialGlowTexture(77, 171, 247); // matches monitorLight blue
+    const bezelGlowMaterial = new THREE.SpriteMaterial({
+        map: bezelGlowTexture,
         color: 0xffffff,
-        emissive: 0xffffff,
-        emissiveIntensity: 0.0,
-        wireframe: false
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
     });
-    const screenGlow = new THREE.Mesh(glowGeometry, glowMaterial);
-    screenGlow.position.set(0, 0, -0.05);
-    screenGlow.userData = { isScreenGlow: true };
-    screen.add(screenGlow);
-
-    // Add hint text canvas positioned below monitor
-    const hintCanvas = document.createElement('canvas');
-    hintCanvas.width = 256;
-    hintCanvas.height = 64;
-    const hintCtx = hintCanvas.getContext('2d');
-    hintCtx.fillStyle = '#ffffff';
-    hintCtx.font = '14px monospace';
-    hintCtx.textAlign = 'center';
-    hintCtx.fillText('Click to explore →', 128, 40);
-    
-    const hintTexture = new THREE.CanvasTexture(hintCanvas);
-    const hintMaterial = new THREE.MeshStandardMaterial({
-        map: hintTexture,
-        emissive: 0x666666,
-        emissiveIntensity: 0.3,
-        emissiveMap: hintTexture,
-        transparent: true
-    });
-    const hintMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.6, 0.15),
-        hintMaterial
-    );
-    hintMesh.position.set(0, -0.5, 0.02);
-    hintMesh.userData = { isHint: true };
-    screen.add(hintMesh);
+    const bezelGlow = new THREE.Sprite(bezelGlowMaterial);
+    // Sized larger than the frame (1.3 x 0.85) so it halos out around the edges,
+    // positioned slightly further back than the frame so the bezel occludes the
+    // sprite's center and only the aura "bleeds" around the outer edge.
+    bezelGlow.scale.set(1.9, 1.5, 1);
+    bezelGlow.position.set(0, 1.85, -0.42);
+    bezelGlow.userData = { isBezelGlow: true };
+    monitor.add(bezelGlow);
 
     monitor.add(stand, neck, frame, screen);
     desk.add(monitor);
@@ -741,21 +747,20 @@ function animate() {
     requestAnimationFrame(animate);
     controls.update();
 
-    // Pulsing glow effect on monitor screen
+    // Pulsing aura glow around the monitor bezel (NOT the screen content).
+    // Slow ~2.6s cycle: opacity breathes between a dim and bright value, with a
+    // very subtle scale change for extra depth. The screen texture/material is
+    // never touched here, so the code lines stay fully static and stable.
     const time = Date.now() * 0.001;
-    const pulseCycle = (Math.sin(time * 1.5) + 1) / 2; // Oscillates 0 to 1
-    
-    if (monitor && monitor.children) {
-        monitor.children.forEach(child => {
-            if (child.userData && child.userData.interactive) {
-                // screen object
-                child.children.forEach(screenChild => {
-                    if (screenChild.userData && screenChild.userData.isScreenGlow) {
-                        screenChild.material.emissiveIntensity = pulseCycle * 0.3;
-                    }
-                });
-            }
-        });
+    const pulseCycle = (Math.sin(time * (Math.PI * 2 / 2.6)) + 1) / 2; // 0..1 over ~2.6s
+
+    if (monitor) {
+        const bezelGlow = monitor.children.find(child => child.userData && child.userData.isBezelGlow);
+        if (bezelGlow) {
+            bezelGlow.material.opacity = 0.22 + pulseCycle * 0.28; // 0.22 -> 0.50
+            const scale = 1.0 + pulseCycle * 0.06; // subtle breathing scale
+            bezelGlow.scale.set(1.9 * scale, 1.5 * scale, 1);
+        }
     }
 
     renderer.render(scene, camera);
